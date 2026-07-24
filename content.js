@@ -1,3 +1,22 @@
+/** Filter page console by: [WA-Sheet] */
+const LOG_PREFIX = "[WA-Sheet]";
+function cLog(scope, message, data) {
+  if (data !== undefined) console.log(LOG_PREFIX, scope, message, data);
+  else console.log(LOG_PREFIX, scope, message);
+}
+function cWarn(scope, message, data) {
+  if (data !== undefined) console.warn(LOG_PREFIX, scope, message, data);
+  else console.warn(LOG_PREFIX, scope, message);
+}
+function cError(scope, error, extra) {
+  console.error(LOG_PREFIX, scope, {
+    message: error?.message || String(error),
+    name: error?.name,
+    stack: error?.stack,
+    ...extra
+  });
+}
+
 let lastContact = "";
 let timer;
 let tagsTimer;
@@ -66,10 +85,24 @@ function publishContact(force = false) {
     const key = `${contact.phone || ""}|${contact.title || ""}|${contact.isGroup || false}`;
     if (force || key !== lastContact) {
       lastContact = key;
-      if (!chrome.runtime?.id) return;
+      cLog("contact", "changed", {
+        phone: contact.phone || "",
+        title: contact.title || "",
+        source: contact.source || "",
+        isGroup: Boolean(contact.isGroup),
+        from: domContact.phone ? "dom" : (mainWorldContact ? "main-world" : "empty")
+      });
+      if (!chrome.runtime?.id) {
+        cWarn("contact", "extension context invalidated, skip sendMessage");
+        return;
+      }
       try {
-        chrome.runtime.sendMessage({ type: "contact-changed", contact }).catch(() => {});
-      } catch {}
+        chrome.runtime.sendMessage({ type: "contact-changed", contact }).catch(error => {
+          cError("contact/sendMessage", error);
+        });
+      } catch (error) {
+        cError("contact/sendMessage", error);
+      }
     }
     scheduleApplyTags();
   }, 250);
@@ -529,6 +562,25 @@ function rememberTitleVisual(title, visual) {
   titleVisualCache.set(name.toLowerCase(), visual);
 }
 
+let titlePhonePersistTimer;
+function persistTitlePhonesSoon() {
+  clearTimeout(titlePhonePersistTimer);
+  titlePhonePersistTimer = setTimeout(() => {
+    try {
+      chrome.storage.local.set({ waSheetTitlePhones: titlePhoneMap });
+    } catch {}
+  }, 800);
+}
+
+function rememberTitlePhone(title, phone) {
+  const name = String(title || "").trim();
+  const n = normalizePhoneDigits(phone);
+  if (!name || !n || name.length > 80) return;
+  if (titlePhoneMap[name] === n) return;
+  titlePhoneMap[name] = n;
+  persistTitlePhonesSoon();
+}
+
 function resolveRowVisual(row, hasMap, hasCurrent) {
   const title = rowTitle(row);
 
@@ -537,7 +589,14 @@ function resolveRowVisual(row, hasMap, hasCurrent) {
     if (cached && visualHasSignal(cached)) return cached;
   }
 
-  let phone = phoneFromTitleMap(title);
+  // For watch-list map: always try to resolve phone from the row (no need to open chat).
+  let phone = "";
+  if (hasMap) {
+    phone = extractPhoneFromRow(row) || phoneFromTitleMap(title);
+  } else {
+    phone = phoneFromTitleMap(title);
+  }
+
   if (!phone && hasCurrent) {
     if (activeSheetTags.title && title === activeSheetTags.title) {
       phone = normalizePhoneDigits(activeSheetTags.phone);
@@ -545,7 +604,12 @@ function resolveRowVisual(row, hasMap, hasCurrent) {
       phone = normalizePhoneDigits(activeSheetTags.phone);
     }
   }
-  if (!phone && hasMap) phone = extractPhoneFromRow(row);
+
+  // Phone shown in title (unsaved contacts).
+  if (!phone && title) {
+    const m = title.match(/\+?\d[\d\s()-]{6,}\d/);
+    if (m) phone = normalizePhoneDigits(m[0]);
+  }
 
   let visual = emptyVisual();
   if (visualHasSignal(activeSheetTags) && (
@@ -553,11 +617,15 @@ function resolveRowVisual(row, hasMap, hasCurrent) {
     || (activeSheetTags.phone && phonesMatch(phone, activeSheetTags.phone))
   )) {
     visual = normalizeVisual(activeSheetTags);
-  } else {
+  } else if (phone || title) {
     visual = lookupVisual(phone, title);
   }
 
-  if (visualHasSignal(visual)) rememberTitleVisual(title, visual);
+  // Only inject for people we already queried (watch map / current). Non-watch stay empty until opened.
+  if (visualHasSignal(visual)) {
+    rememberTitleVisual(title, visual);
+    if (phone && title) rememberTitlePhone(title, phone);
+  }
   return visual;
 }
 
@@ -690,6 +758,13 @@ function setSheetTags(payload) {
     nameColor: payload?.nameColor || "",
     tagPlacement: payload?.tagPlacement === "name" ? "name" : "message"
   };
+  cLog("tags", "setSheetTags", {
+    phone: activeSheetTags.phone,
+    title: activeSheetTags.title,
+    tagCount: activeSheetTags.tags.length,
+    nameColor: activeSheetTags.nameColor || "",
+    placement: activeSheetTags.tagPlacement
+  });
   if (activeSheetTags.title && activeSheetTags.phone) {
     titlePhoneMap[activeSheetTags.title] = normalizePhoneDigits(activeSheetTags.phone);
   }
@@ -710,6 +785,7 @@ function setTagMap(map, titlePhones) {
       next[key] = visual;
     }
     visualMap = next;
+    cLog("tags", "setTagMap", { phones: Object.keys(next).length });
   }
   if (titlePhones && typeof titlePhones === "object") {
     titlePhoneMap = { ...titlePhoneMap, ...titlePhones };
@@ -797,6 +873,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+cLog("boot", "content script loaded", { href: location.href });
 document.dispatchEvent(new CustomEvent("wa-sheet-request-contact"));
 publishContact(true);
 ensureTagObserver();

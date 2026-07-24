@@ -19,6 +19,14 @@ import {
   tagColorsToText,
   toColorInputValue
 } from "./shared.mjs";
+import {
+  logError,
+  logInfo,
+  logWarn,
+  safeUrl,
+  setDebugLogging,
+  summarizeError
+} from "./debug.mjs";
 
 const sourceDefaults = {
   name: "",
@@ -29,6 +37,7 @@ const sourceDefaults = {
   editableColumns: "",
   tagColumns: "",
   nameColorColumn: "",
+  freshColumns: "",
   tagPlacement: "message",
   tagColors: ""
 };
@@ -60,7 +69,11 @@ let sourceHitOrder = [];
 let persistCacheTimer;
 let watchRefreshTimer;
 const cachedIndexes = new Map();
+// CRM / static fields: longer cache is fine.
 const cacheLifetime = 5 * 60 * 1000;
+// Watch-list (e.g. online status): must re-fetch often; timer alone is not enough if index cache is 5min.
+const watchIndexMaxAgeMs = 15 * 1000;
+// Watch-list auto refresh while sidepanel is open.
 const watchRefreshMs = 2 * 60 * 1000;
 const maxCacheEntries = 8;
 const PERSIST_CACHE_KEY = "sheetIndexCache";
@@ -502,18 +515,36 @@ function mapHasPhone(map, phone) {
   return Object.keys(map).some(key => phonesLooselyEqual(key, phone));
 }
 
+function expandVisualMapKeys(map) {
+  // Store multiple phone key shapes so list matching is more reliable.
+  const out = {};
+  for (const [phone, visual] of Object.entries(map || {})) {
+    const n = normalizePhone(phone);
+    if (!n || !visual) continue;
+    const keys = new Set([n, phone]);
+    if (n.length > 10) {
+      keys.add(n.slice(-10));
+      keys.add(n.slice(-9));
+    }
+    if (n.startsWith("225") && n.length >= 11) keys.add(n.slice(3));
+    for (const key of keys) out[key] = visual;
+  }
+  return out;
+}
+
 async function publishWhatsAppTagMap(map = buildTagMapFromCaches()) {
+  const expanded = expandVisualMapKeys(map);
   lastPublishedVisualMap = map;
   try {
     await chrome.storage.local.set({
-      waSheetTagMap: map,
+      waSheetTagMap: expanded,
       waSheetTitlePhones: titlePhoneAliases,
       waSheetWatchPhones: parseWatchPhones(config.watchPhones)
     });
   } catch {}
   await notifyWhatsAppTabs({
     type: "sheet-tag-map",
-    map,
+    map: expanded,
     titlePhones: titlePhoneAliases,
     watchPhones: parseWatchPhones(config.watchPhones)
   });
@@ -531,7 +562,18 @@ async function warmWhatsAppTagMap(options = {}) {
     source => source.tagColumns?.length || source.nameColorColumn
   );
   const focus = options.phones?.length ? options.phones : focusPhones();
+  logInfo("warm", "start", {
+    mode,
+    forceReload,
+    sources: sources.length,
+    focus: focus.length,
+    loggedIn: Boolean(googleToken)
+  });
   if (!sources.length || !focus.length) {
+    logWarn("warm", "skip: no sources with tags/nameColor or no focus phones", {
+      sources: sources.length,
+      focus: focus.length
+    });
     if (mode === "incremental") {
       await publishWhatsAppTagMap({ ...lastPublishedVisualMap });
     } else {
@@ -544,11 +586,13 @@ async function warmWhatsAppTagMap(options = {}) {
   if (mode === "incremental") {
     targets = focus.filter(phone => !mapHasPhone(lastPublishedVisualMap, phone));
     if (!targets.length) {
+      logInfo("warm", "incremental: nothing new");
       renderWatchStatus(lastPublishedVisualMap);
       const error = document.querySelector("#watch-error");
       if (error) error.textContent = "";
       return { requested: 0, matched: 0, skipped: true };
     }
+    logInfo("warm", "incremental targets", { count: targets.length, sample: targets.slice(0, 5) });
   }
 
   const status = document.querySelector("#watch-status");
@@ -568,12 +612,30 @@ async function warmWhatsAppTagMap(options = {}) {
   for (const source of sources) {
     for (const tabName of source.tabNames) {
       try {
-        await loadIndex(source, tabName, controller.signal);
+        logInfo("warm", "loadIndex", {
+          sheet: source.sheetId,
+          tabName,
+          phoneColumn: source.phoneColumn,
+          freshColumns: source.freshColumns || []
+        });
+        // If "快速刷新列" is set: keep bulk data on long cache, only re-fetch those columns.
+        // Otherwise: short maxAge for the whole used range (previous behavior).
+        if (source.freshColumns?.length) {
+          await loadIndex(source, tabName, controller.signal, { maxAgeMs: cacheLifetime });
+          await patchFreshColumns(source, tabName, controller.signal);
+        } else {
+          await loadIndex(source, tabName, controller.signal, { maxAgeMs: watchIndexMaxAgeMs });
+        }
         const partial = buildTagMapFromCaches();
         renderWatchStatus(mode === "incremental"
           ? { ...lastPublishedVisualMap, ...partial }
           : partial);
       } catch (error) {
+        logError("warm/loadIndex", error, {
+          sheet: source.sheetId,
+          tabName,
+          mode
+        });
         if (error.name === "AbortError") return { requested: targets.length, matched: 0 };
       }
     }
@@ -593,6 +655,11 @@ async function warmWhatsAppTagMap(options = {}) {
   }
   await publishWhatsAppTagMap(pruned);
   const matched = targets.filter(phone => mapHasPhone(pruned, phone)).length;
+  logInfo("warm", "done", {
+    requested: targets.length,
+    matched,
+    published: Object.keys(pruned).length
+  });
   return { requested: targets.length, matched };
 }
 
@@ -601,9 +668,18 @@ function startWatchRefreshTimer() {
   watchRefreshTimer = setInterval(() => {
     if (!parseWatchPhones(config.watchPhones).length) return;
     // Background refresh uses cache when valid; does not clear config.
-    warmWhatsAppTagMap({ mode: "all" }).catch(() => {});
+    logInfo("warm", "2min timer refresh");
+    warmWhatsAppTagMap({ mode: "all" }).catch(error => logError("warm/timer", error));
   }, watchRefreshMs);
 }
+
+// When user comes back to the sidepanel, refresh watch list once.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (!parseWatchPhones(config.watchPhones).length) return;
+  logInfo("warm", "sidepanel visible → refresh watch");
+  warmWhatsAppTagMap({ mode: "all" }).catch(error => logError("warm/visible", error));
+});
 
 async function saveWatchListOnly() {
   config = {
@@ -896,8 +972,16 @@ function updateAuthUi() {
 }
 
 async function getGoogleToken(interactive) {
-  const result = await chrome.identity.getAuthToken({ interactive });
-  return typeof result === "string" ? result : (result?.token || "");
+  logInfo("auth", "getAuthToken", { interactive });
+  try {
+    const result = await chrome.identity.getAuthToken({ interactive });
+    const token = typeof result === "string" ? result : (result?.token || "");
+    logInfo("auth", token ? "token ok" : "token empty", { interactive });
+    return token;
+  } catch (error) {
+    logError("auth/getAuthToken", error, { interactive });
+    throw error;
+  }
 }
 
 async function ensureGoogleWriteAccess() {
@@ -919,9 +1003,30 @@ async function loadPrivateRows(source, tabName, keepColumns, signal) {
   const fields = "sheets(data(startRow,startColumn,rowData(values(formattedValue,hyperlink,textFormatRuns(format(link))))))";
   const params = new URLSearchParams({ includeGridData: "true", fields });
   for (const range of ranges) params.append("ranges", range);
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?${params}`, {
-    headers: { Authorization: `Bearer ${googleToken}` },
-    signal
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}?${params}`;
+  const started = performance.now();
+  logInfo("fetch/private", "request", { sheetId: id, tabName, ranges, url: safeUrl(url) });
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${googleToken}` },
+      signal
+    });
+  } catch (error) {
+    logError("fetch/private", error, {
+      sheetId: id,
+      tabName,
+      ms: Math.round(performance.now() - started),
+      ...summarizeError(error)
+    });
+    throw error;
+  }
+  logInfo("fetch/private", "response", {
+    sheetId: id,
+    tabName,
+    status: response.status,
+    ok: response.ok,
+    ms: Math.round(performance.now() - started)
   });
   if (response.status === 401) {
     await chrome.identity.removeCachedAuthToken({ token: googleToken });
@@ -932,7 +1037,16 @@ async function loadPrivateRows(source, tabName, keepColumns, signal) {
   if (response.status === 403) throw new Error("当前 Google 账号无权查看表格，或尚未启用 Sheets API");
   if (response.status === 404) throw new Error(`找不到表格或子表“${tabName}”`);
   if (!response.ok) throw new Error(`Google Sheets API 读取失败（HTTP ${response.status}）`);
-  return sheetApiRows(await response.json());
+  const rows = sheetApiRows(await response.json());
+  logInfo("fetch/private", "rows", { tabName, count: rows.length });
+  return rows;
+}
+
+function publicSheetAccessError(tabName = "") {
+  const where = tabName ? `子表「${tabName}」` : "表格";
+  return new Error(
+    `${where}无法公开读取（已跳到 Google 登录页）。请二选一：① 表格「共享」设为「知道链接的任何人可查看」；② 在侧板「登录 Google」后用私有表模式读取。`
+  );
 }
 
 async function fetchPublicHtml(id, tabName, tq, signal) {
@@ -941,12 +1055,53 @@ async function fetchPublicHtml(id, tabName, tq, signal) {
     sheet: tabName
   });
   if (tq) params.set("tq", tq);
-  const response = await fetch(
-    `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?${params}`,
-    { signal }
-  );
+  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?${params}`;
+  const started = performance.now();
+  logInfo("fetch/public", "request", { sheetId: id, tabName, tq: tq || "(full)", url: safeUrl(url) });
+  let response;
+  try {
+    response = await fetch(url, { signal, redirect: "follow" });
+  } catch (error) {
+    logError("fetch/public", error, {
+      sheetId: id,
+      tabName,
+      tq: tq || "(full)",
+      ms: Math.round(performance.now() - started),
+      ...summarizeError(error)
+    });
+    // CORS on accounts.google.com login redirect surfaces as TypeError: Failed to fetch
+    if (error.name === "TypeError" || /Failed to fetch|NetworkError|CORS/i.test(error.message || "")) {
+      throw publicSheetAccessError(tabName);
+    }
+    throw error;
+  }
+  logInfo("fetch/public", "response", {
+    sheetId: id,
+    tabName,
+    status: response.status,
+    ok: response.ok,
+    finalUrl: safeUrl(response.url),
+    ms: Math.round(performance.now() - started)
+  });
+
+  // Private sheet: gviz redirects to Google login; browser then hits CORS.
+  if (/accounts\.google\.com/i.test(response.url) || /ServiceLogin/i.test(response.url)) {
+    logWarn("fetch/public", "redirected to Google login (sheet not public)", {
+      sheetId: id,
+      tabName,
+      finalUrl: safeUrl(response.url)
+    });
+    throw publicSheetAccessError(tabName);
+  }
+
   if (!response.ok) throw new Error(`无法读取表格（HTTP ${response.status}）`);
-  return response.text();
+  const text = await response.text();
+  if (/accounts\.google\.com|ServiceLogin|sign in|登录 Google/i.test(text.slice(0, 2000))
+    && !/<table[\s>]/i.test(text)) {
+    logWarn("fetch/public", "login HTML without table", { tabName, length: text.length });
+    throw publicSheetAccessError(tabName);
+  }
+  return text;
 }
 
 function projectedRowsLookValid(denseRows, columnCount) {
@@ -965,14 +1120,19 @@ async function loadPublicRows(source, tabName, keepColumns, signal) {
   try {
     const dense = parseHtmlRows(await fetchPublicHtml(id, tabName, tq, signal));
     if (projectedRowsLookValid(dense, ordered.length)) {
+      logInfo("fetch/public", "using column projection", { tabName, columns: ordered.length, rows: dense.length });
       return expandColumnRows(dense, ordered);
     }
+    logWarn("fetch/public", "projection invalid, fallback full sheet", { tabName, rows: dense.length });
   } catch (error) {
     if (error.name === "AbortError") throw error;
+    logWarn("fetch/public", "projection failed, fallback full sheet", summarizeError(error));
   }
 
   // Full sheet is the reliable path (same behavior as before column projection).
-  return parseHtmlRows(await fetchPublicHtml(id, tabName, "", signal));
+  const full = parseHtmlRows(await fetchPublicHtml(id, tabName, "", signal));
+  logInfo("fetch/public", "full sheet rows", { tabName, count: full.length });
+  return full;
 }
 
 function cacheKey(source, tabName) {
@@ -1082,20 +1242,118 @@ function patchCachedCell(match, colIndex, cell) {
   }
 }
 
-async function loadIndex(source, tabName, signal) {
+/** Merge only selected columns from a slim fetch into an existing phone index. */
+function mergeFreshColumnsIntoIndex(index, rows, phoneIndex, columnIndexes) {
+  if (!index || !rows?.length || !columnIndexes?.length) return 0;
+  let updated = 0;
+  for (const row of rows) {
+    const phone = normalizePhone(row[phoneIndex]);
+    if (!phone) continue;
+    let entry = index.get(phone);
+    if (!entry) {
+      for (const [key, value] of index) {
+        if (phonesLooselyEqual(key, phone)) {
+          entry = value;
+          break;
+        }
+      }
+    }
+    if (!entry?.cells) continue;
+    let changed = false;
+    for (const col of columnIndexes) {
+      if (row[col] == null) continue;
+      entry.cells[col] = row[col];
+      changed = true;
+    }
+    if (changed) updated += 1;
+  }
+  return updated;
+}
+
+async function patchFreshColumns(source, tabName, signal) {
+  const cols = [...new Set([source.phoneIndex, ...(source.freshIndexes || [])])];
+  if (cols.length < 2) return 0;
+  logInfo("fresh", "patch columns", {
+    tabName,
+    columns: source.freshColumns,
+    mode: googleToken ? "private" : "public"
+  });
+  const rows = googleToken
+    ? await loadPrivateRows(source, tabName, cols, signal)
+    : await loadPublicRows(source, tabName, cols, signal);
   const key = cacheKey(source, tabName);
   const cached = cachedIndexes.get(key);
-  if (cached?.expiresAt > Date.now()) {
+  if (!cached?.index) {
+    // No base index yet — build a minimal one from this slim fetch.
+    const index = buildPhoneIndex(rows, source.phoneIndex, cols);
+    touchCache(key, {
+      index,
+      fetchedAt: Date.now(),
+      expiresAt: Date.now() + cacheLifetime
+    });
+    logInfo("fresh", "built minimal index from fresh cols", { phones: index.size });
+    return index.size;
+  }
+  const updated = mergeFreshColumnsIntoIndex(
+    cached.index,
+    rows,
+    source.phoneIndex,
+    source.freshIndexes || []
+  );
+  cached.fetchedAt = Date.now();
+  touchCache(key, cached);
+  logInfo("fresh", "merged", { tabName, updated, rows: rows.length });
+  return updated;
+}
+
+/**
+ * @param {{ maxAgeMs?: number }} options
+ *   maxAgeMs: how fresh the in-memory index must be (default: cacheLifetime).
+ *   Watch refresh should pass a short maxAge so online status is not stuck 5 minutes.
+ */
+async function loadIndex(source, tabName, signal, options = {}) {
+  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? options.maxAgeMs : cacheLifetime;
+  const key = cacheKey(source, tabName);
+  const cached = cachedIndexes.get(key);
+  const age = cached?.fetchedAt != null ? (Date.now() - cached.fetchedAt) : null;
+  const freshEnough = Boolean(
+    cached
+    && cached.expiresAt > Date.now()
+    && (
+      age == null
+        ? maxAgeMs >= cacheLifetime // legacy entries: only for long-cache callers
+        : age <= maxAgeMs
+    )
+  );
+  if (freshEnough) {
+    logInfo("index", "cache hit", { key, size: cached.index.size, ageMs: age, maxAgeMs });
     touchCache(key, cached);
     return cached.index;
   }
 
-  const rows = googleToken
-    ? await loadPrivateRows(source, tabName, source.keepColumns, signal)
-    : await loadPublicRows(source, tabName, source.keepColumns, signal);
-  const index = buildPhoneIndex(rows, source.phoneIndex, source.keepColumns);
-  touchCache(key, { index, expiresAt: Date.now() + cacheLifetime });
-  return index;
+  logInfo("index", "cache miss/stale, loading", {
+    key,
+    mode: googleToken ? "private" : "public",
+    tabName,
+    ageMs: age,
+    maxAgeMs
+  });
+  try {
+    const rows = googleToken
+      ? await loadPrivateRows(source, tabName, source.keepColumns, signal)
+      : await loadPublicRows(source, tabName, source.keepColumns, signal);
+    const index = buildPhoneIndex(rows, source.phoneIndex, source.keepColumns);
+    logInfo("index", "built", { tabName, rows: rows.length, phones: index.size });
+    touchCache(key, {
+      index,
+      fetchedAt: Date.now(),
+      expiresAt: Date.now() + cacheLifetime
+    });
+    return index;
+  } catch (error) {
+    logError("index/load", error, { key, tabName, mode: googleToken ? "private" : "public" });
+    throw error;
+  }
 }
 
 async function readSheetCell(sheetId, tabName, column, sheetRow) {
@@ -1162,6 +1420,15 @@ async function queryContact(options = {}) {
   queryController = controller;
 
   const phone = normalizePhone(contact.phone);
+  logInfo("query", "start", {
+    force,
+    phone,
+    title: contact.title || "",
+    source: contact.source || "",
+    isGroup: Boolean(contact.isGroup),
+    sources: preparedSources.length,
+    loggedIn: Boolean(googleToken)
+  });
   setContactName(contact.title || (phone ? `+${phone}` : "请在 WhatsApp 中打开一个聊天"));
 
   if (contact.isGroup) {
@@ -1235,6 +1502,13 @@ async function queryContact(options = {}) {
             ...lastPublishedVisualMap,
             [phone]: buildContactVisual(match)
           };
+          logInfo("query", "hit", {
+            phone,
+            label,
+            tabName,
+            sheetRow: hit.sheetRow,
+            tags: buildTagItems(match).map(item => item.text)
+          });
           return;
         }
       }
@@ -1242,9 +1516,15 @@ async function queryContact(options = {}) {
     lastQueriedPhone = phone;
     lastMatch = null;
     clearContactTags();
+    logWarn("query", "not found", { phone, searched });
     setStatus(`在 ${searched.join("、")} 中未找到 ${phone}`);
   } catch (error) {
-    if (error.name !== "AbortError") setStatus(error.message);
+    if (error.name === "AbortError") {
+      logInfo("query", "aborted (newer query started)", { phone });
+      return;
+    }
+    logError("query", error, { phone, force });
+    setStatus(error.message);
   }
 }
 
@@ -1377,6 +1657,32 @@ chrome.runtime.onMessage.addListener(message => {
     contact = message.contact;
     queryContact();
   }
+  if (message.type === "watch-refresh-please") {
+    if (parseWatchPhones(config.watchPhones).length) {
+      logInfo("warm", "alarm requested watch refresh");
+      warmWhatsAppTagMap({ mode: "all" }).catch(error => logError("warm/alarm", error));
+    }
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.watchRefreshRequestedAt) return;
+  if (!parseWatchPhones(config.watchPhones).length) return;
+  logInfo("warm", "storage alarm flag", { at: changes.watchRefreshRequestedAt.newValue });
+  warmWhatsAppTagMap({ mode: "all" }).catch(error => logError("warm/storage-alarm", error));
+});
+
+// Debug: filter console with [WA-Sheet]. Disable: chrome.storage.local.set({ debugLogs: false })
+try {
+  const dbg = await chrome.storage.local.get("debugLogs");
+  if (dbg.debugLogs === false) setDebugLogging({ on: false, detail: false });
+  else setDebugLogging({ on: true, detail: true });
+} catch {
+  setDebugLogging({ on: true, detail: true });
+}
+logInfo("boot", "sidepanel starting", {
+  version: chrome.runtime.getManifest?.()?.version,
+  debug: true
 });
 
 const boot = await chrome.storage.local.get([HIT_ORDER_KEY, "waSheetTitlePhones"]);
@@ -1411,7 +1717,18 @@ try {
     await notifyWhatsAppTabs({ type: "sheet-tags", payload: waSheetTags });
   }
 } catch {}
-// Boot: restore cached visuals only; no automatic full re-query.
+// Restore cached visuals, then auto-query watch list (no need to open each chat).
 renderWatchStatus(lastPublishedVisualMap);
 startWatchRefreshTimer();
 requestCurrentContact();
+
+const watchCount = parseWatchPhones(config.watchPhones).length;
+if (watchCount) {
+  const mapSize = Object.keys(lastPublishedVisualMap || {}).length;
+  logInfo("boot", "auto warm watch list", { watchCount, mapSize });
+  // Use cache when valid; only hits network if index expired / missing.
+  warmWhatsAppTagMap({
+    mode: mapSize ? "all" : "all",
+    forceReload: false
+  }).catch(error => logError("boot/warm", error));
+}

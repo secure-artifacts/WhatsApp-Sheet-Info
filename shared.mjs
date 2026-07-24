@@ -221,6 +221,14 @@ export function parseTagPlacement(value) {
   return placement === "name" ? "name" : "message";
 }
 
+/**
+ * Columns that need frequent refresh on the watch list (e.g. online status).
+ * Must appear in result columns. Empty = watch refresh reloads all used columns.
+ */
+export function parseFreshColumns(value, resultColumns) {
+  return parseListedColumns(value, resultColumns, "快速刷新列");
+}
+
 const NAMED_TAG_COLORS = {
   green: "#00a884",
   red: "#e5484d",
@@ -437,6 +445,7 @@ export function prepareSource(source, index = 0, options = {}) {
     let tagColumns = [];
     let tagColors = [];
     let nameColorColumn = "";
+    let freshColumns = [];
     const tagPlacement = parseTagPlacement(source.tagPlacement);
     try {
       editableColumns = parseEditableColumns(source.editableColumns, columns);
@@ -454,16 +463,23 @@ export function prepareSource(source, index = 0, options = {}) {
       if (strictOptional) throw error;
     }
     try {
+      freshColumns = parseFreshColumns(source.freshColumns, columns);
+    } catch (error) {
+      if (strictOptional) throw error;
+    }
+    try {
       tagColors = parseTagColors(source.tagColors);
     } catch (error) {
       if (strictOptional) throw error;
     }
     const resultIndexes = columns.map(({ column }) => columnIndex(column));
     const nameColorIndex = nameColorColumn ? columnIndex(nameColorColumn) : -1;
+    const freshIndexes = freshColumns.map(column => columnIndex(column));
     const keepColumns = [...new Set([
       phoneIndex,
       ...resultIndexes,
-      ...(nameColorIndex >= 0 ? [nameColorIndex] : [])
+      ...(nameColorIndex >= 0 ? [nameColorIndex] : []),
+      ...freshIndexes
     ])];
     return {
       ...source,
@@ -476,6 +492,8 @@ export function prepareSource(source, index = 0, options = {}) {
       editableSet: new Set(editableColumns),
       tagColumns,
       nameColorColumn,
+      freshColumns,
+      freshIndexes,
       tagPlacement,
       tagColors,
       keepColumns

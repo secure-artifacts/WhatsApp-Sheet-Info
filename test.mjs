@@ -14,6 +14,7 @@ import {
   parseColumns,
   parseCsv,
   parseEditableColumns,
+  parseFreshColumns,
   parseTagColors,
   parseNameColorColumn,
   parseTagColumns,
@@ -139,6 +140,9 @@ assert.throws(() => parseTagColumns("ZZ", resultColumns), /名称标签列/);
 assert.equal(parseNameColorColumn("BH", parseColumns("D=状态\nBH=进度")), "BH");
 assert.equal(parseNameColorColumn("", resultColumns), "");
 assert.throws(() => parseNameColorColumn("ZZ", resultColumns), /名字颜色列/);
+assert.deepEqual(parseFreshColumns("BH\nD", parseColumns("D=状态\nBH=进度")), ["BH", "D"]);
+assert.deepEqual(parseFreshColumns("", resultColumns), []);
+assert.throws(() => parseFreshColumns("ZZ", resultColumns), /快速刷新列/);
 assert.equal(parseTagPlacement("name"), "name");
 assert.equal(parseTagPlacement(""), "message");
 assert.equal(normalizeTagColor("green"), "#00a884");

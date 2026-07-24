@@ -40,7 +40,7 @@
           关注号码（可选，每行一个）
           <textarea id="watch-phones" rows="8" placeholder="+225 07 00 00 00 00&#10;33612345678"></textarea>
         </label>
-        <p class="hint">只给这些人在列表里显示标签。保存只存名单；查询在下面按钮。新增号码可用「查询新增」。</p>
+        <p class="hint">关注名单约每 2 分钟刷新。若在表格设置里填了「快速刷新列」，定时只重拉这些列（如在线状态），其它列走长缓存。非关注需点开聊天。</p>
         <div class="watch-actions">
           <button id="save-watch" type="button">保存名单</button>
           <button id="query-watch-new" class="primary" type="button">查询新增</button>
@@ -114,6 +114,11 @@
         名字颜色列（可选，只改名字颜色，不显示文字，如 BH）
         <input data-field="nameColorColumn" maxlength="4" placeholder="BH">
       </label>
+      <label>
+        快速刷新列（可选，关注名单定时只重拉这些列，减轻负担）
+        <textarea data-field="freshColumns" rows="2" placeholder="BH&#10;D"></textarea>
+      </label>
+      <p class="hint">例如只把「在线状态」列填这里。不填则关注刷新会重拉全部用到的列。</p>
       <label>
         气泡标签位置
         <select data-field="tagPlacement">
