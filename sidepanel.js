@@ -50,6 +50,8 @@ const elements = {
   resultsHint: document.querySelector("#results-hint"),
   settings: document.querySelector("#settings"),
   settingsError: document.querySelector("#settings-error"),
+  settingsSuccess: document.querySelector("#settings-success"),
+  saveSettings: document.querySelector("#save-settings"),
   sources: document.querySelector("#sources"),
   sourceTabs: document.querySelector("#source-tabs"),
   template: document.querySelector("#source-template")
@@ -1555,48 +1557,151 @@ document.querySelector("#toggle-settings").addEventListener("click", () => {
   showView("settings-view");
 });
 
+document.querySelector("#export-config")?.addEventListener("click", async () => {
+  try {
+    showBackupError("");
+    const payload = await buildExportPayload();
+    const day = new Date().toISOString().slice(0, 10);
+    downloadJson(`wa-sheet-info-backup-${day}.json`, payload);
+    const sourceCount = payload.config?.sources?.length || 0;
+    const phoneCount = parseWatchPhones(payload.config?.watchPhones).length;
+    showBackupSuccess(`✓ 已导出：${sourceCount} 个表格，${phoneCount} 个关注号码`);
+    logInfo("backup", "exported", { sourceCount, phoneCount });
+  } catch (error) {
+    logError("backup/export", error);
+    showBackupError(error.message || "导出失败");
+  }
+});
+
+document.querySelector("#import-config")?.addEventListener("click", () => {
+  document.querySelector("#import-config-file")?.click();
+});
+
+document.querySelector("#import-config-file")?.addEventListener("change", async event => {
+  const input = event.target;
+  const file = input?.files?.[0];
+  if (!file) return;
+  try {
+    showBackupError("");
+    const text = await file.text();
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error("JSON 解析失败，请选择本插件导出的 .json 文件");
+    }
+    await applyImportPayload(payload);
+    const sourceCount = config.sources?.length || 0;
+    const phoneCount = parseWatchPhones(config.watchPhones).length;
+    showBackupSuccess(`✓ 已导入：${sourceCount} 个表格，${phoneCount} 个关注号码。可再点「保存配置」确认。`);
+    showSettingsSuccess(`✓ 配置已从文件恢复（${sourceCount} 表 / ${phoneCount} 关注号）`);
+    logInfo("backup", "imported", { sourceCount, phoneCount, file: file.name });
+  } catch (error) {
+    logError("backup/import", error);
+    showBackupError(error.message || "导入失败");
+  } finally {
+    if (input) input.value = "";
+  }
+});
+
 document.querySelector("#watch-phones")?.addEventListener("input", () => {
   renderWatchStatus();
 });
 
-document.querySelector("#save-watch")?.addEventListener("click", async () => {
+function showWatchSuccess(message) {
+  const ok = document.querySelector("#watch-success");
   const error = document.querySelector("#watch-error");
   if (error) error.textContent = "";
+  if (ok) {
+    ok.textContent = message;
+    ok.classList.remove("hidden");
+  }
+}
+
+function showWatchError(message) {
+  const ok = document.querySelector("#watch-success");
+  const error = document.querySelector("#watch-error");
+  if (ok) {
+    ok.textContent = "";
+    ok.classList.add("hidden");
+  }
+  if (error) error.textContent = message || "";
+}
+
+document.querySelector("#save-watch")?.addEventListener("click", async () => {
+  const button = document.querySelector("#save-watch");
+  const original = button?.textContent || "保存名单";
   try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "保存中…";
+    }
+    showWatchError("");
     await saveWatchListOnly();
     renderWatchStatus(lastPublishedVisualMap);
-    setStatus(`关注名单已保存（${parseWatchPhones(config.watchPhones).length} 个），未自动查询`);
+    const n = parseWatchPhones(config.watchPhones).length;
+    showWatchSuccess(`✓ 名单已保存（${n} 个号码），未自动查询`);
+    setStatus(`关注名单已保存（${n} 个），未自动查询`);
+    if (button) button.textContent = "已保存";
+    setTimeout(() => {
+      if (button && button.textContent === "已保存") button.textContent = original;
+    }, 2000);
   } catch (err) {
-    if (error) error.textContent = err.message;
+    showWatchError(err.message);
+    if (button) button.textContent = original;
+  } finally {
+    if (button) button.disabled = false;
   }
 });
 
 document.querySelector("#query-watch-new")?.addEventListener("click", async () => {
-  const error = document.querySelector("#watch-error");
-  if (error) error.textContent = "";
+  const button = document.querySelector("#query-watch-new");
+  const original = button?.textContent || "查询新增";
   try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "查询中…";
+    }
+    showWatchError("");
     await saveWatchListOnly();
     const result = await warmWhatsAppTagMap({ mode: "incremental" });
     if (result.skipped) {
-      if (error) error.textContent = "没有需要增量查询的新号码（都已查过或名单为空）";
+      showWatchSuccess("✓ 没有需要增量查询的新号码");
       setStatus("关注号码：无新增可查");
       return;
     }
+    showWatchSuccess(`✓ 增量查询完成：请求 ${result.requested}，匹配 ${result.matched}`);
     setStatus(`增量查询完成：新增请求 ${result.requested}，匹配 ${result.matched}`);
   } catch (err) {
-    if (error) error.textContent = err.message;
+    showWatchError(err.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original;
+    }
   }
 });
 
 document.querySelector("#query-watch-all")?.addEventListener("click", async () => {
-  const error = document.querySelector("#watch-error");
-  if (error) error.textContent = "";
+  const button = document.querySelector("#query-watch-all");
+  const original = button?.textContent || "全部重查";
   try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "重查中…";
+    }
+    showWatchError("");
     await saveWatchListOnly();
     const result = await warmWhatsAppTagMap({ mode: "all", forceReload: true });
+    showWatchSuccess(`✓ 全部重查完成：请求 ${result.requested}，匹配 ${result.matched}`);
     setStatus(`全部重查完成：请求 ${result.requested}，匹配 ${result.matched}`);
   } catch (err) {
-    if (error) error.textContent = err.message;
+    showWatchError(err.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original;
+    }
   }
 });
 
@@ -1631,9 +1736,130 @@ document.querySelector("#auth-button").addEventListener("click", async () => {
   }
 });
 
+function showSettingsSuccess(message) {
+  if (elements.settingsSuccess) {
+    elements.settingsSuccess.textContent = message;
+    elements.settingsSuccess.classList.remove("hidden");
+  }
+  if (elements.settingsError) elements.settingsError.textContent = "";
+}
+
+function showSettingsError(message) {
+  if (elements.settingsSuccess) {
+    elements.settingsSuccess.textContent = "";
+    elements.settingsSuccess.classList.add("hidden");
+  }
+  if (elements.settingsError) elements.settingsError.textContent = message;
+}
+
+function showBackupSuccess(message) {
+  const ok = document.querySelector("#backup-success");
+  const err = document.querySelector("#backup-error");
+  if (err) err.textContent = "";
+  if (ok) {
+    ok.textContent = message;
+    ok.classList.remove("hidden");
+  }
+}
+
+function showBackupError(message) {
+  const ok = document.querySelector("#backup-success");
+  const err = document.querySelector("#backup-error");
+  if (ok) {
+    ok.textContent = "";
+    ok.classList.add("hidden");
+  }
+  if (err) err.textContent = message || "";
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Prefer current form values when valid; otherwise saved config. */
+function collectConfigSnapshot() {
+  let watchPhones = config.watchPhones || "";
+  let sources = config.sources || [{ ...sourceDefaults }];
+  try {
+    if (document.querySelector("#watch-phones")) {
+      watchPhones = readWatchPhonesField();
+    }
+  } catch {}
+  try {
+    if (elements.sources?.querySelector(".source-editor")) {
+      sources = readSources();
+    }
+  } catch {
+    // Invalid form → export last saved sources instead of failing export entirely.
+    sources = config.sources || sources;
+  }
+  return normalizeConfig({ watchPhones, sources });
+}
+
+async function buildExportPayload() {
+  const snapshot = collectConfigSnapshot();
+  let titlePhones = titlePhoneAliases;
+  try {
+    const local = await chrome.storage.local.get(["waSheetTitlePhones"]);
+    if (local.waSheetTitlePhones && typeof local.waSheetTitlePhones === "object") {
+      titlePhones = { ...titlePhoneAliases, ...local.waSheetTitlePhones };
+    }
+  } catch {}
+  return {
+    app: "whatsapp-sheet-info",
+    format: 1,
+    exportedAt: new Date().toISOString(),
+    config: snapshot,
+    titlePhones
+  };
+}
+
+async function applyImportPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("文件内容无效");
+  }
+  if (payload.app && payload.app !== "whatsapp-sheet-info") {
+    throw new Error("不是本插件的配置文件");
+  }
+  const rawConfig = payload.config && typeof payload.config === "object"
+    ? payload.config
+    : payload;
+  const next = normalizeConfig(rawConfig);
+  if (!next.sources?.length) throw new Error("配置中没有表格");
+  // Strict validate each source before writing.
+  next.sources.forEach((source, index) => prepareSource(source, index));
+
+  config = next;
+  await chrome.storage.sync.set({ config });
+
+  if (payload.titlePhones && typeof payload.titlePhones === "object") {
+    titlePhoneAliases = { ...payload.titlePhones };
+    await chrome.storage.local.set({ waSheetTitlePhones: titlePhoneAliases });
+  }
+
+  rebuildPreparedSources();
+  renderSourceEditors();
+  syncWatchPhonesField();
+  renderWatchStatus(lastPublishedVisualMap);
+  cachedIndexes.clear();
+}
+
 elements.settings.addEventListener("submit", async event => {
   event.preventDefault();
+  const button = elements.saveSettings || elements.settings.querySelector('button[type="submit"]');
+  const originalLabel = button?.textContent || "保存配置";
   try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "保存中…";
+    }
+    showSettingsError("");
     const watchText = document.querySelector("#watch-phones")
       ? readWatchPhonesField()
       : (config.watchPhones || "");
@@ -1645,10 +1871,20 @@ elements.settings.addEventListener("submit", async event => {
     // Config save only — do not auto-query sheets/watch list.
     await chrome.storage.sync.set({ config });
     syncWatchPhonesField();
-    elements.settingsError.textContent = "";
+    const count = config.sources?.length || 0;
+    showSettingsSuccess(`✓ 已保存 ${count} 个表格配置（未自动查询）`);
     setStatus("表格配置已保存（未自动查询）");
+    logInfo("settings", "saved", { sources: count });
+    if (button) button.textContent = "已保存";
+    setTimeout(() => {
+      if (button && button.textContent === "已保存") button.textContent = originalLabel;
+    }, 2000);
   } catch (error) {
-    elements.settingsError.textContent = error.message;
+    logError("settings/save", error);
+    showSettingsError(error.message || "保存失败");
+    if (button) button.textContent = originalLabel;
+  } finally {
+    if (button) button.disabled = false;
   }
 });
 

@@ -46,6 +46,7 @@
           <button id="query-watch-new" class="primary" type="button">查询新增</button>
           <button id="query-watch-all" type="button">全部重查</button>
         </div>
+        <p id="watch-success" class="success hidden" role="status"></p>
         <p id="watch-error" class="error" role="alert"></p>
         <div id="watch-status" class="watch-status hidden" aria-live="polite"></div>
       </section>
@@ -60,7 +61,19 @@
           </div>
           <button id="auth-button" type="button">登录</button>
         </div>
-        <p id="auth-hint" class="hint">编辑或读取非公开表时需登录</p>
+        <p id="auth-hint" class="hint">编辑表格或读取非公开表时需登录</p>
+      </section>
+
+      <section class="card">
+        <h2>备份与恢复</h2>
+        <p class="hint">导出关注号码 + 表格设置。更新/重装扩展后导入即可恢复，不必重新填写。</p>
+        <div class="backup-actions">
+          <button id="export-config" type="button">导出配置</button>
+          <button id="import-config" type="button">导入配置</button>
+          <input id="import-config-file" type="file" accept="application/json,.json" hidden>
+        </div>
+        <p id="backup-success" class="success hidden" role="status"></p>
+        <p id="backup-error" class="error" role="alert"></p>
       </section>
 
       <form id="settings">
@@ -69,8 +82,9 @@
           <button id="add-source" class="source-add" type="button" aria-label="添加表格" title="添加表格">＋</button>
         </div>
         <div id="sources"></div>
-        <button class="primary" type="submit">保存配置</button>
+        <button id="save-settings" class="primary" type="submit">保存配置</button>
         <p class="hint">这里只保存表格设置，不会自动查关注号码。查标签请到「关注号码」页。</p>
+        <p id="settings-success" class="success hidden" role="status"></p>
         <p id="settings-error" class="error" role="alert"></p>
       </form>
     </section>
