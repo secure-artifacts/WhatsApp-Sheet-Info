@@ -46,7 +46,9 @@ Chrome/Edge Manifest V3 插件：根据 WhatsApp Web 当前聊天号码，在指
 
 5. 在 `chrome://extensions` 点击本扩展的「重新加载」。  
 
-可选：若需要**固定扩展 ID**（方便 OAuth 回调），可用 `openssl` 生成密钥对，将公钥写入 `manifest.json` 的 `"key"` 字段；**私钥（.pem）切勿提交到 Git**（已在 `.gitignore`）。
+仓库中的 `manifest.json` 已包含**公钥** `"key"`，用于**固定扩展 ID**（谁加载同一份代码，ID 都相同）。这是公钥，可以公开；**私钥 `.pem` 切勿提交**。
+
+登录 Google 仍需把 `oauth2.client_id` 换成你自己的（或使用维护者私下提供的已配置整包）。OAuth 控制台里登记的扩展 ID 须与加载后 `chrome://extensions` 显示的 ID 一致。
 
 ## 使用说明
 
