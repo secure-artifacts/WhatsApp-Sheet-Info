@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WhatsApp Sheet Info",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApEBCCbrjKsop/gpUk5FOH0EJ0GG7PN1YJdbffw5rRdS++cgNBE+Q//Iud/oOargZpJSLk4F/bWfikQdS5bFUd2DGRAcvV0QHUly7wNPfA/EYKiS38xlR9Kcat8lFBc0yBYBGdj8tCyZ5Mj5IWx76J1/8/ZxeCk1WKPzFjTBSIonewE/y1D4/2cIVHNV9+3tmkJkp1fA3h4NKqhj94S4bSLkLeZ7hbHAjluCqlabhQasfSjE/P+2cHgM7Pn/DWQ6XaSXUZzCyMX2Fobi3le8QTz1RVubP5u4JT+zlGDYXJuhQB6U6G5gzHNzSJljGSw+AUWsLgH2P7ry13UfhF2lx2wIDAQAB",
   "description": "在 WhatsApp Web 右侧显示 Google Sheet 中匹配联系人的信息。",
   "permissions": ["storage", "sidePanel", "identity", "alarms"],

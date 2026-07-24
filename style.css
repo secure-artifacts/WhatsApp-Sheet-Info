@@ -279,24 +279,35 @@ select {
 .backup-actions,
 .watch-actions {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 10px 0 4px;
 }
 .backup-actions button {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 9px 6px;
+  flex: 1 1 calc(50% - 4px);
+  min-width: 120px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--background);
   color: var(--text);
   font: inherit;
   font-size: 13px;
+  white-space: nowrap;
 }
 .backup-actions button:hover {
   border-color: var(--green);
   color: var(--green);
+}
+/* Global input { display:block } would unhide this and crush the buttons. */
+.backup-actions input[type="file"],
+#import-config-file {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  position: absolute !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 .auth-card + .card h2 {
   margin-bottom: 8px;
