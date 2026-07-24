@@ -873,10 +873,42 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// MAIN-world list scan: title↔phone without opening each chat.
+document.addEventListener("wa-sheet-directory", event => {
+  const byTitle = event.detail?.byTitle || {};
+  let added = 0;
+  for (const [title, phone] of Object.entries(byTitle)) {
+    const n = normalizePhoneDigits(phone);
+    const name = String(title || "").trim();
+    if (!name || !n) continue;
+    if (titlePhoneMap[name] === n) continue;
+    titlePhoneMap[name] = n;
+    const lower = name.toLowerCase();
+    titlePhoneMap[lower] = n;
+    const norm = normalizePersonNameLocal(name);
+    if (norm) titlePhoneMap[norm] = n;
+    added += 1;
+  }
+  if (added) {
+    cLog("directory", "merged MAIN list phones", {
+      added,
+      totalTitles: Object.keys(titlePhoneMap).length,
+      scanned: event.detail?.count || 0
+    });
+    persistTitlePhonesSoon();
+    scheduleApplyTags();
+  }
+});
+
 cLog("boot", "content script loaded", { href: location.href });
 document.dispatchEvent(new CustomEvent("wa-sheet-request-contact"));
+document.dispatchEvent(new CustomEvent("wa-sheet-request-directory"));
 publishContact(true);
 ensureTagObserver();
+// Keep asking MAIN world to rescan list phones (watch tags without click).
+setInterval(() => {
+  document.dispatchEvent(new CustomEvent("wa-sheet-request-directory"));
+}, 4000);
 setInterval(ensureTagObserver, 3000);
 // Rare safety net only — main path is immediate mutation + intersection prefetch.
 setInterval(() => {
