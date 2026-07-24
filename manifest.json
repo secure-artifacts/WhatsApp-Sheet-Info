@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp Sheet Info",
+  "version": "0.11.3",
+  "description": "在 WhatsApp Web 右侧显示 Google Sheet 中匹配联系人的信息。",
+  "permissions": ["storage", "sidePanel", "identity"],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://docs.google.com/spreadsheets/*",
+    "https://sheets.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["detect-main.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "打开联系人信息"
+  }
+}

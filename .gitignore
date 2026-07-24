@@ -1,0 +1,21 @@
+# Private keys / packaged extension
+*.pem
+*.crx
+*.zip
+
+# Local secrets / machine-specific config
+.env
+.env.*
+*.local.json
+manifest.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Dependencies (if any later)
+node_modules/

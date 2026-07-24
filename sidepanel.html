@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>联系人信息</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-main">
+      <h1>联系人信息</h1>
+      <div class="contact-line">
+        <p id="contact">请在 WhatsApp 中打开一个聊天</p>
+        <div id="contact-tags" class="contact-tags" aria-label="名称标签"></div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="refresh-data" type="button" aria-label="刷新表格数据" title="刷新表格数据">↻</button>
+      <button id="toggle-settings" type="button" aria-label="打开表格设置">⚙</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-view="results-view" role="tab" aria-selected="true">查询结果</button>
+    <button class="tab" data-view="watch-view" role="tab" aria-selected="false">关注号码</button>
+    <button class="tab" data-view="settings-view" role="tab" aria-selected="false">表格设置</button>
+  </nav>
+
+  <main>
+    <section id="results-view" class="view">
+      <section id="status" class="card muted">等待联系人…</section>
+      <p id="results-hint" class="hint hidden">⠿ 拖动排序 · 可编辑列可写回表格</p>
+      <section id="results"></section>
+    </section>
+
+    <section id="watch-view" class="view hidden">
+      <section class="card">
+        <label>
+          关注号码（可选，每行一个）
+          <textarea id="watch-phones" rows="8" placeholder="+225 07 00 00 00 00&#10;33612345678"></textarea>
+        </label>
+        <p class="hint">只给这些人在列表里显示标签。保存只存名单；查询在下面按钮。新增号码可用「查询新增」。</p>
+        <div class="watch-actions">
+          <button id="save-watch" type="button">保存名单</button>
+          <button id="query-watch-new" class="primary" type="button">查询新增</button>
+          <button id="query-watch-all" type="button">全部重查</button>
+        </div>
+        <p id="watch-error" class="error" role="alert"></p>
+        <div id="watch-status" class="watch-status hidden" aria-live="polite"></div>
+      </section>
+    </section>
+
+    <section id="settings-view" class="view hidden">
+      <section class="card auth-card">
+        <div class="auth-row">
+          <div class="auth-meta">
+            <h2>Google</h2>
+            <span id="auth-status">未登录 · 公开只读</span>
+          </div>
+          <button id="auth-button" type="button">登录</button>
+        </div>
+        <p id="auth-hint" class="hint">编辑或读取非公开表时需登录</p>
+      </section>
+
+      <form id="settings">
+        <div class="source-nav">
+          <div id="source-tabs" class="source-tabs" role="tablist" aria-label="表格切换"></div>
+          <button id="add-source" class="source-add" type="button" aria-label="添加表格" title="添加表格">＋</button>
+        </div>
+        <div id="sources"></div>
+        <button class="primary" type="submit">保存配置</button>
+        <p class="hint">这里只保存表格设置，不会自动查关注号码。查标签请到「关注号码」页。</p>
+        <p id="settings-error" class="error" role="alert"></p>
+      </form>
+    </section>
+  </main>
+
+  <template id="source-template">
+    <fieldset class="card source-editor">
+      <div class="source-header">
+        <h2 class="source-title"></h2>
+        <button class="remove-source" type="button">删除</button>
+      </div>
+      <label>
+        备注名称
+        <input data-field="name" placeholder="如：7月客户表" maxlength="40">
+      </label>
+      <label>
+        表格链接或 ID
+        <input data-field="sheetId" required placeholder="https://docs.google.com/spreadsheets/d/...">
+      </label>
+      <label>
+        子表名称（每行一个，按顺序搜）
+        <textarea data-field="tabName" required rows="3" placeholder="客户资料&#10;历史客户"></textarea>
+      </label>
+      <label>
+        号码列
+        <input data-field="phoneColumn" required value="AA" maxlength="4">
+      </label>
+      <label>
+        结果列（每行：列=显示名）
+        <textarea data-field="resultColumns" required rows="4" placeholder="D=客户等级&#10;BI=负责人&#10;BJ=备注"></textarea>
+      </label>
+      <label>
+        可编辑列（可选，须在结果列中）
+        <textarea data-field="editableColumns" rows="2" placeholder="BJ"></textarea>
+      </label>
+      <label>
+        气泡标签列（可选，建议只填 1 列，如状态 D）
+        <textarea data-field="tagColumns" rows="2" placeholder="D"></textarea>
+      </label>
+      <label>
+        名字颜色列（可选，只改名字颜色，不显示文字，如 BH）
+        <input data-field="nameColorColumn" maxlength="4" placeholder="BH">
+      </label>
+      <label>
+        气泡标签位置
+        <select data-field="tagPlacement">
+          <option value="message">信息栏（最后一条消息处）</option>
+          <option value="name">名字后面</option>
+        </select>
+      </label>
+      <div class="tag-colors-block">
+        <div class="field-label">颜色规则（标签 + 名字颜色共用）</div>
+        <p class="hint">关键词<strong>包含</strong>即匹配。给名字颜色列的规则请在左侧填列名（如 BH）。多规则时更长关键词优先。</p>
+        <div class="tag-color-rules" data-tag-color-rules></div>
+        <button type="button" class="add-tag-color">＋ 添加颜色规则</button>
+        <textarea data-field="tagColors" class="tag-colors-store" hidden aria-hidden="true" tabindex="-1"></textarea>
+      </div>
+    </fieldset>
+  </template>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
