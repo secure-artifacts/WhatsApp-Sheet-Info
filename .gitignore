@@ -19,3 +19,6 @@ Thumbs.db
 
 # Dependencies (if any later)
 node_modules/
+
+# Local packaging output
+dist/

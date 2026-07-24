@@ -97,6 +97,31 @@ Chrome/Edge Manifest V3 插件：根据 WhatsApp Web 当前聊天号码，在指
 node test.mjs
 ```
 
+## 发布 Release（团队构件证明 / Attestation）
+
+团队审核要求：Release 资源必须带 **GitHub Artifact Attestation（SLSA 构件证明）**。  
+本仓库已提供 `.github/workflows/release.yml`，在**同一个 job** 内完成：测试 → 打包 zip → `attest-build-provenance` → 上传 Release（**证明后不再二次压缩**）。
+
+### 推荐发布方式
+
+**方式 A：打 tag 触发**
+
+```bash
+# 版本与 manifest.json 保持一致更清晰
+git tag v0.11.4
+git push origin v0.11.4
+```
+
+**方式 B：Actions 手动运行**  
+GitHub → Actions → **Release** → Run workflow（可填 tag，如 `v0.11.4`）。
+
+### 注意
+
+1. **不要**在网页上手工上传未证明的 zip 作为唯一产物（会再次「未找到构件证明」）。  
+2. 证明与上传必须同一 workflow job（已按此编写）。  
+3. 仓库 Settings → Actions → General 需允许 workflow 写 contents / 使用 GITHUB_TOKEN。  
+4. 组织若开启强制 attestation 策略，用本 workflow 打出的 Release 才会过审。
+
 ## 请勿提交
 
 - Google OAuth 客户端密钥（若有）  

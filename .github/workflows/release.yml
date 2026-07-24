@@ -1,0 +1,101 @@
+# Team review requires GitHub Artifact Attestations (SLSA provenance)
+# for Release assets. Attest and upload must happen in the SAME job
+# without re-zipping after attestation (SHA256 must stay identical).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.11.4). Leave empty to use manifest.json version."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run unit tests
+        run: node test.mjs
+
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            VERSION="$(node -p "require('./manifest.json').version")"
+            TAG="v${VERSION}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) TAG="v${TAG}" ;;
+          esac
+          NAME="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "asset=whatsapp-sheet-info-${NAME}.zip" >> "$GITHUB_OUTPUT"
+          echo "Resolved release ${TAG} / ${NAME}"
+
+      - name: Package extension zip (final asset)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Build the FINAL release bytes here. Do not re-zip after attestation.
+          zip -9 -X -r "dist/${{ steps.ver.outputs.asset }}" \
+            manifest.json \
+            background.js \
+            content.js \
+            detect-main.js \
+            shared.mjs \
+            sidepanel.html \
+            sidepanel.js \
+            style.css \
+            README.md
+          (
+            cd dist
+            sha256sum "${{ steps.ver.outputs.asset }}" | tee SHA256SUMS.txt
+          )
+          ls -la dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          # Must point at the exact file later attached to the Release.
+          subject-path: dist/${{ steps.ver.outputs.asset }}
+
+      - name: Create GitHub Release and upload attested asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ steps.ver.outputs.asset }}
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
